@@ -18,7 +18,6 @@ export type HeroAnim = {
   facing: number;
 };
 
-type Joint = THREE.Group;
 
 export type HeroRig = {
   group: THREE.Group;
@@ -35,22 +34,35 @@ export function createHero(): HeroRig {
     mats.push(m);
     return m;
   };
-  const skin = mat(new THREE.MeshStandardMaterial({ color: 0xc48a62, roughness: 0.58, metalness: 0.02 }));
-  const hair = mat(new THREE.MeshStandardMaterial({ color: 0x1a120e, roughness: 0.42, metalness: 0.06 }));
-  const kurta = mat(new THREE.MeshStandardMaterial({ color: 0xf3e2c4, roughness: 0.78 }));
-  const jacket = mat(new THREE.MeshStandardMaterial({ color: 0x241c18, roughness: 0.6, metalness: 0.08 }));
-  const gold = mat(new THREE.MeshStandardMaterial({ color: 0xe7b04a, roughness: 0.32, metalness: 0.74 }));
-  const cloth = mat(new THREE.MeshStandardMaterial({ color: 0x3a2c24, roughness: 0.8 }));
-  const shoe = mat(new THREE.MeshStandardMaterial({ color: 0x16110e, roughness: 0.52 }));
-  const white = mat(new THREE.MeshStandardMaterial({ color: 0xf4f1ea, roughness: 0.28 }));
-  const dark = mat(new THREE.MeshStandardMaterial({ color: 0x1a120c, roughness: 0.3 }));
-  const lip = mat(new THREE.MeshStandardMaterial({ color: 0xa85a48, roughness: 0.48 }));
-  const brass = mat(new THREE.MeshStandardMaterial({ color: 0xd4a24c, roughness: 0.28, metalness: 0.86 }));
+  // Blocky chibi "Lightbearer" rig matching the reference art: masked hero in a navy
+  // gold-trimmed coat, red scarf + cape, white dhoti, brown belt, dark boots, lantern.
+  const std = (color: number, rough = 0.7, metal = 0.05, emissive = 0x000000, ei = 0) =>
+    mat(new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, emissive, emissiveIntensity: ei }));
+  const skin = std(0xe2ab84, 0.62, 0.02, 0x5a3020, 0.35);
+  const hair = std(0x14100e, 0.5);
+  const coat = std(0x1d2742, 0.68, 0.05, 0x0a1022, 0.4);
+  const gold = std(0xe7b04a, 0.35, 0.7, 0x5a3a08, 0.35);
+  const red = std(0xc8282a, 0.72, 0.02, 0x3a0606, 0.35);
+  const white = std(0xf2ece0, 0.8);
+  const belt = std(0x6a3e1e, 0.6);
+  const boot = std(0x1a1512, 0.55);
+  const mask = std(0x0c0a0c, 0.35);
+  const eyeW = mat(new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  const eyeD = mat(new THREE.MeshBasicMaterial({ color: 0x241408 }));
+  const mouthM = mat(new THREE.MeshBasicMaterial({ color: 0x6a2a20 }));
   const flame = mat(new THREE.MeshBasicMaterial({ color: 0xffb03a }));
   const core = mat(new THREE.MeshBasicMaterial({ color: 0xfff1c2 }));
+  const brass = std(0xb8862c, 0.3, 0.8, 0x3a2408, 0.3);
 
-  const geo = (g: THREE.BufferGeometry) => {
-    geos.push(g);
+  const boxes = new Map<string, THREE.BoxGeometry>();
+  const box = (w: number, h: number, d: number) => {
+    const k = `${w}|${h}|${d}`;
+    let g = boxes.get(k);
+    if (!g) {
+      g = new THREE.BoxGeometry(w, h, d);
+      boxes.set(k, g);
+      geos.push(g);
+    }
     return g;
   };
   const group = new THREE.Group();
@@ -59,97 +71,137 @@ export function createHero(): HeroRig {
   const hips = new THREE.Group();
   hips.position.y = 0.9;
   group.add(hips);
-
   const torso = new THREE.Group();
   hips.add(torso);
 
-  const chest = mesh(geo(new THREE.CylinderGeometry(0.16, 0.15, 0.42, 10)), kurta, torso, 0, 0.2, 0);
-  chest.scale.set(1.05, 1, 0.82);
-  const jacketL = mesh(geo(new THREE.BoxGeometry(0.08, 0.4, 0.22)), jacket, torso, -0.16, 0.2, 0);
-  const jacketR = mesh(geo(new THREE.BoxGeometry(0.08, 0.4, 0.22)), jacket, torso, 0.16, 0.2, 0);
-  mesh(geo(new THREE.BoxGeometry(0.02, 0.38, 0.23)), gold, torso, -0.125, 0.2, 0);
-  mesh(geo(new THREE.BoxGeometry(0.02, 0.38, 0.23)), gold, torso, 0.125, 0.2, 0);
-  mesh(geo(new THREE.BoxGeometry(0.06, 0.08, 0.02)), gold, torso, 0, 0.28, 0.12);
-  const skirt = mesh(geo(new THREE.CylinderGeometry(0.2, 0.24, 0.34, 10)), kurta, hips, 0, -0.12, 0);
-  skirt.scale.z = 0.78;
-
-  const headP = new THREE.Group();
-  headP.position.y = 0.46;
-  torso.add(headP);
-  const head = mesh(geo(new THREE.SphereGeometry(0.125, 14, 12)), skin, headP, 0, 0.12, 0);
-  head.scale.set(1, 1.08, 0.94);
-  const hairCap = mesh(geo(new THREE.SphereGeometry(0.132, 14, 10)), hair, headP, 0, 0.16, -0.01);
-  hairCap.scale.set(1.02, 0.72, 1.02);
-  mesh(geo(new THREE.BoxGeometry(0.2, 0.06, 0.08)), hair, headP, 0, 0.2, 0.06);
-  mesh(geo(new THREE.SphereGeometry(0.03, 8, 6)), skin, headP, -0.12, 0.1, 0);
-  mesh(geo(new THREE.SphereGeometry(0.03, 8, 6)), skin, headP, 0.12, 0.1, 0);
-  // Bigger, expressive eyes with catch-lights and confident brows.
-  const eyeL = mesh(geo(new THREE.SphereGeometry(0.028, 10, 8)), white, headP, -0.047, 0.125, 0.098);
-  const eyeR = mesh(geo(new THREE.SphereGeometry(0.028, 10, 8)), white, headP, 0.047, 0.125, 0.098);
-  eyeL.scale.set(1, 1.15, 0.6);
-  eyeR.scale.set(1, 1.15, 0.6);
-  const irisMat = mat(new THREE.MeshBasicMaterial({ color: 0x3a2008 }));
-  const shine = mat(new THREE.MeshBasicMaterial({ color: 0xffffff }));
-  for (const e of [eyeL, eyeR]) {
-    mesh(geo(new THREE.SphereGeometry(0.016, 8, 6)), irisMat, e, 0, -0.002, 0.02);
-    mesh(geo(new THREE.SphereGeometry(0.009, 6, 6)), dark, e, 0, -0.002, 0.03);
-    mesh(geo(new THREE.SphereGeometry(0.005, 6, 4)), shine, e, 0.007, 0.008, 0.034);
+  // Dhoti + belt
+  mesh(box(0.42, 0.32, 0.28), white, hips, 0, -0.14, 0);
+  mesh(box(0.42, 0.06, 0.28), belt, hips, 0, 0.03, 0);
+  mesh(box(0.07, 0.05, 0.02), gold, hips, 0, 0.03, 0.145);
+  // Coat torso
+  mesh(box(0.4, 0.42, 0.25), coat, torso, 0, 0.27, 0);
+  mesh(box(0.42, 0.04, 0.27), gold, torso, 0, 0.07, 0); // hem trim
+  mesh(box(0.03, 0.4, 0.01), gold, torso, -0.075, 0.27, 0.128); // lapel trims
+  mesh(box(0.03, 0.4, 0.01), gold, torso, 0.075, 0.27, 0.128);
+  // Gold diya emblem on chest
+  mesh(box(0.14, 0.045, 0.01), gold, torso, 0, 0.25, 0.131);
+  mesh(box(0.08, 0.03, 0.01), gold, torso, 0, 0.22, 0.131);
+  const emb = mesh(box(0.05, 0.08, 0.012), mat(new THREE.MeshBasicMaterial({ color: 0xffc14a })), torso, 0, 0.31, 0.132);
+  emb.position.y = 0.31;
+  emb.rotation.z = Math.PI / 4;
+  // Coat tails
+  mesh(box(0.14, 0.2, 0.02), coat, torso, -0.12, -0.04, 0.12);
+  mesh(box(0.14, 0.2, 0.02), coat, torso, 0.12, -0.04, 0.12);
+  // Shoulders
+  mesh(box(0.13, 0.08, 0.27), coat, torso, -0.25, 0.46, 0);
+  mesh(box(0.13, 0.08, 0.27), coat, torso, 0.25, 0.46, 0);
+  // Red scarf + cape
+  mesh(box(0.36, 0.08, 0.28), red, torso, 0, 0.5, 0);
+  const scarfTail = mesh(box(0.08, 0.2, 0.03), red, torso, 0.1, 0.38, 0.14);
+  scarfTail.rotation.z = 0.2;
+  const cape = new THREE.Group();
+  cape.position.set(0, 0.5, -0.14);
+  torso.add(cape);
+  const capeA = mesh(box(0.5, 0.55, 0.03), red, cape, 0, -0.27, 0);
+  const capeB = mesh(box(0.6, 0.4, 0.03), red, cape, 0, -0.7, -0.07);
+  capeB.rotation.x = 0.25;
+  for (const sx of [-1, 1]) {
+    const wing = mesh(box(0.03, 0.75, 0.22), red, cape, 0.26 * sx, -0.4, 0.06);
+    wing.rotation.z = 0.12 * sx;
   }
-  const browL = mesh(geo(new THREE.BoxGeometry(0.06, 0.016, 0.02)), hair, headP, -0.047, 0.165, 0.1);
-  const browR = mesh(geo(new THREE.BoxGeometry(0.06, 0.016, 0.02)), hair, headP, 0.047, 0.165, 0.1);
-  browL.rotation.z = -0.18;
-  browR.rotation.z = 0.18;
-  // Warm smile
-  const smile = mesh(geo(new THREE.TorusGeometry(0.03, 0.007, 5, 12, Math.PI)), lip, headP, 0, 0.062, 0.108);
-  smile.rotation.z = Math.PI;
-  mesh(geo(new THREE.SphereGeometry(0.02, 8, 6)), mat(new THREE.MeshBasicMaterial({ color: 0xe08a7a, transparent: true, opacity: 0.35 })), headP, -0.075, 0.08, 0.085);
-  mesh(geo(new THREE.SphereGeometry(0.02, 8, 6)), mat(new THREE.MeshBasicMaterial({ color: 0xe08a7a, transparent: true, opacity: 0.35 })), headP, 0.075, 0.08, 0.085);
-  const nose = mesh(geo(new THREE.ConeGeometry(0.018, 0.045, 6)), skin, headP, 0, 0.09, 0.11);
-  nose.rotation.x = Math.PI / 2;
+  void capeA;
+
+  // Head (big chibi block)
+  const headP = new THREE.Group();
+  headP.position.y = 0.52;
+  headP.scale.setScalar(1.22);
+  torso.add(headP);
+  const head = mesh(box(0.34, 0.34, 0.32), skin, headP, 0, 0.18, 0);
+  void head;
+  mesh(box(0.36, 0.1, 0.34), hair, headP, 0, 0.37, -0.005);
+  mesh(box(0.36, 0.2, 0.08), hair, headP, 0, 0.27, -0.14);
+  mesh(box(0.05, 0.14, 0.3), hair, headP, -0.17, 0.28, -0.01);
+  mesh(box(0.05, 0.14, 0.3), hair, headP, 0.17, 0.28, -0.01);
+  // Puffy short hair volume with a swept tuft
+  mesh(box(0.38, 0.12, 0.36), hair, headP, 0, 0.45, -0.01);
+  mesh(box(0.3, 0.08, 0.3), hair, headP, -0.01, 0.53, -0.02);
+  const tuft = mesh(box(0.16, 0.08, 0.12), hair, headP, 0.08, 0.5, 0.12);
+  tuft.rotation.z = -0.35;
+  mesh(box(0.3, 0.05, 0.04), hair, headP, 0, 0.33, 0.15); // fringe
+  // Eye mask with holes and friendly eyes
+  mesh(box(0.355, 0.085, 0.02), mask, headP, 0, 0.22, 0.165);
+  const eyeL = mesh(box(0.06, 0.045, 0.01), eyeW, headP, -0.07, 0.22, 0.177);
+  const eyeR = mesh(box(0.06, 0.045, 0.01), eyeW, headP, 0.07, 0.22, 0.177);
+  mesh(box(0.028, 0.035, 0.01), eyeD, eyeL, 0.008, -0.002, 0.004);
+  mesh(box(0.028, 0.035, 0.01), eyeD, eyeR, 0.008, -0.002, 0.004);
+  mesh(box(0.01, 0.01, 0.01), eyeW, eyeL, 0.014, 0.008, 0.01);
+  mesh(box(0.01, 0.01, 0.01), eyeW, eyeR, 0.014, 0.008, 0.01);
+  // mask ties
+  mesh(box(0.03, 0.03, 0.12), mask, headP, -0.17, 0.22, -0.18).rotation.x = 0.5;
+  // nose + smile
+  mesh(box(0.04, 0.05, 0.03), skin, headP, 0, 0.14, 0.17);
+  mesh(box(0.1, 0.02, 0.01), mouthM, headP, 0, 0.075, 0.162);
+  mesh(box(0.02, 0.02, 0.01), mouthM, headP, -0.055, 0.085, 0.162);
+  mesh(box(0.02, 0.02, 0.01), mouthM, headP, 0.055, 0.085, 0.162);
+  mesh(box(0.05, 0.08, 0.06), skin, headP, -0.185, 0.18, 0);
+  mesh(box(0.05, 0.08, 0.06), skin, headP, 0.185, 0.18, 0);
 
   const arm = (side: number) => {
     const shoulder = new THREE.Group();
-    shoulder.position.set(side * 0.2, 0.36, 0);
+    shoulder.position.set(side * 0.27, 0.42, 0);
     torso.add(shoulder);
-    mesh(geo(new THREE.CapsuleGeometry(0.045, 0.22, 4, 8)), jacket, shoulder, 0, -0.16, 0);
+    mesh(box(0.12, 0.24, 0.13), coat, shoulder, 0, -0.12, 0);
     const elbow = new THREE.Group();
-    elbow.position.y = -0.3;
+    elbow.position.y = -0.24;
     shoulder.add(elbow);
-    mesh(geo(new THREE.CapsuleGeometry(0.04, 0.2, 4, 8)), skin, elbow, 0, -0.14, 0);
+    mesh(box(0.115, 0.18, 0.125), coat, elbow, 0, -0.08, 0);
+    mesh(box(0.125, 0.04, 0.135), gold, elbow, 0, -0.16, 0);
     const hand = new THREE.Group();
-    hand.position.y = -0.28;
+    hand.position.y = -0.22;
     elbow.add(hand);
-    mesh(geo(new THREE.SphereGeometry(0.048, 8, 6)), skin, hand, 0, 0, 0);
+    mesh(box(0.1, 0.09, 0.1), skin, hand, 0, 0, 0);
     return { shoulder, elbow, hand };
   };
   const left = arm(-1);
   const right = arm(1);
 
+  // Glowing lantern carried in the left hand.
   const diya = new THREE.Group();
-  right.hand.add(diya);
-  mesh(geo(new THREE.CylinderGeometry(0.055, 0.04, 0.03, 10)), brass, diya, 0, 0.03, 0.02);
-  mesh(geo(new THREE.TorusGeometry(0.05, 0.008, 6, 10)), gold, diya, 0, 0.045, 0.02).rotation.x = Math.PI / 2;
-  const wick = mesh(geo(new THREE.ConeGeometry(0.022, 0.1, 8)), flame, diya, 0, 0.11, 0.02);
-  mesh(geo(new THREE.SphereGeometry(0.016, 8, 6)), core, diya, 0, 0.08, 0.02);
-  const light = new THREE.PointLight(0xffa040, 2.2, 7.5, 2);
-  light.position.set(0, 0.1, 0.02);
+  diya.position.set(0, -0.08, 0.02);
+  left.hand.add(diya);
+  mesh(box(0.02, 0.06, 0.02), brass, diya, 0, -0.02, 0); // handle
+  mesh(box(0.15, 0.03, 0.15), brass, diya, 0, -0.06, 0); // cap
+  mesh(box(0.13, 0.03, 0.13), brass, diya, 0, -0.26, 0); // base
+  for (const [x, z] of [[-0.06, -0.06], [0.06, -0.06], [-0.06, 0.06], [0.06, 0.06]] as const) mesh(box(0.02, 0.18, 0.02), brass, diya, x, -0.16, z);
+  const glass = mat(new THREE.MeshBasicMaterial({ color: 0xffb648, transparent: true, opacity: 0.75 }));
+  mesh(box(0.1, 0.16, 0.1), glass, diya, 0, -0.16, 0);
+  const wick = mesh(box(0.04, 0.08, 0.04), flame, diya, 0, -0.15, 0);
+  mesh(box(0.025, 0.04, 0.025), core, diya, 0, -0.17, 0);
+  const light = new THREE.PointLight(0xffa040, 2.6, 8, 2);
+  light.position.set(0, -0.16, 0.05);
   diya.add(light);
+  const lanternGlow = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: radial(), color: 0xffa040, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }),
+  );
+  lanternGlow.scale.setScalar(0.7);
+  lanternGlow.position.set(0, -0.16, 0);
+  diya.add(lanternGlow);
 
   const leg = (side: number) => {
     const hip = new THREE.Group();
-    hip.position.set(side * 0.09, -0.02, 0);
+    hip.position.set(side * 0.1, -0.06, 0);
     hips.add(hip);
-    mesh(geo(new THREE.CapsuleGeometry(0.055, 0.28, 4, 8)), cloth, hip, 0, -0.2, 0);
+    mesh(box(0.14, 0.26, 0.15), coat, hip, 0, -0.14, 0);
     const knee = new THREE.Group();
-    knee.position.y = -0.4;
+    knee.position.y = -0.3;
     hip.add(knee);
-    mesh(geo(new THREE.CapsuleGeometry(0.048, 0.26, 4, 8)), cloth, knee, 0, -0.18, 0);
-    const foot = mesh(geo(new THREE.BoxGeometry(0.09, 0.06, 0.18)), shoe, knee, 0, -0.36, 0.04);
+    mesh(box(0.14, 0.24, 0.15), boot, knee, 0, -0.14, 0);
+    mesh(box(0.15, 0.03, 0.16), gold, knee, 0, -0.02, 0);
+    const foot = mesh(box(0.15, 0.08, 0.22), boot, knee, 0, -0.27, 0.035);
     return { hip, knee, foot };
   };
   const legL = leg(-1);
   const legR = leg(1);
-
   const rimMat = mat(new THREE.MeshBasicMaterial({ color: 0xffc35a, side: THREE.BackSide, transparent: true, opacity: 0.55, depthWrite: false }));
   const bodyMeshes: THREE.Mesh[] = [];
   group.traverse((obj) => {
@@ -158,7 +210,7 @@ export function createHero(): HeroRig {
       meshObj.castShadow = true;
       meshObj.receiveShadow = true;
       meshObj.geometry.computeBoundingSphere();
-      if ((meshObj.geometry.boundingSphere?.radius ?? 0) > 0.07 && meshObj.material !== flame) bodyMeshes.push(meshObj);
+      if ((meshObj.geometry.boundingSphere?.radius ?? 0) > 0.07 && (meshObj.material as THREE.Material).type === "MeshStandardMaterial") bodyMeshes.push(meshObj);
     }
   });
   // Warm golden rim so the hero pops against the dark city.
@@ -266,9 +318,12 @@ export function createHero(): HeroRig {
       group.scale.setScalar(HERO_SCALE);
     }
 
+    cape.rotation.x = 0.12 + (run ? 0.35 + Math.abs(s) * 0.15 : 0.05 + Math.sin(a.time * 1.3) * 0.04) + (!a.grounded ? 0.3 : 0);
+    diya.rotation.x = run ? Math.sin(a.time * freq) * 0.25 : 0;
     const flick = 0.82 + Math.sin(a.time * 22) * 0.12 + Math.sin(a.time * 37) * 0.06;
     wick.scale.y = flick;
-    light.intensity = 1.8 + Math.sin(a.time * 19) * 0.35;
+    light.intensity = 2.2 + Math.sin(a.time * 19) * 0.4;
+    lanternGlow.scale.setScalar(0.62 + flick * 0.12);
     // 3/4 view toward the camera so the face reads while running.
     group.rotation.y = a.facing > 0 ? Math.PI / 2 - 0.75 : -Math.PI / 2 + 0.75;
     rig.bobY = bob;
@@ -299,4 +354,20 @@ function mesh(
   m.position.set(x, y, z);
   parent.add(m);
   return m;
+}
+
+let radialTex: THREE.Texture | null = null;
+function radial() {
+  if (radialTex) return radialTex;
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, "rgba(255,255,255,1)");
+  grd.addColorStop(0.35, "rgba(255,255,255,0.4)");
+  grd.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grd;
+  g.fillRect(0, 0, 64, 64);
+  radialTex = new THREE.CanvasTexture(c);
+  return radialTex;
 }
