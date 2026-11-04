@@ -10,6 +10,14 @@ const JUMP = 11.1;
 const MOVE = 7.5;
 const SPRINT = 10.8;
 // Hitbox grows with the bigger hero (a bit under the visual 1.25x so existing gaps/ceilings stay passable).
+/** Enemies only open fire inside these ranges (world units) and while roughly on screen. */
+/** Turn characters ~40° toward the camera (3/4 view) so faces read. */
+const FACE_TURN = 0.95;
+const FOE_FIRE_RANGE = 8;
+const BOSS_FIRE_RANGE = 13;
+const FIRE_MAX_DY = 3.2;
+const FOE_WINDUP = 0.5;
+const BOSS_WINDUP = 0.45;
 const PW = 0.48 * 1.12;
 const PH = 1.55 * 1.18;
 
@@ -41,6 +49,8 @@ type Foe = {
   w: number;
   h: number;
   mesh: THREE.Group;
+  /** Seconds left in the shot wind-up telegraph (0 = not winding up). */
+  wind?: number;
 };
 
 type Pickup = {
@@ -70,6 +80,7 @@ type Bolt = {
 };
 
 type Boss = {
+  wind?: number;
   name: string;
   hp: number;
   max: number;
@@ -884,8 +895,22 @@ export class Game {
       }
       if (f.fly) {
         f.y += Math.sin(this.time * 3 + f.x) * 0.6 * dt;
-        if (f.cool <= 0 && chase) {
-          f.cool = 1.75;
+        const inRange =
+          Math.abs(this.p.x - f.x) < FOE_FIRE_RANGE && Math.abs(this.p.y - f.y) < FIRE_MAX_DY && this.onScreen(f.x, f.y + 0.5);
+        let fire = false;
+        if (f.wind && f.wind > 0) {
+          f.wind -= dt;
+          if (!inRange) f.wind = 0;
+          else if (f.wind <= 0) {
+            f.wind = 0;
+            fire = true;
+          }
+        } else if (f.cool <= 0 && inRange) {
+          f.wind = FOE_WINDUP;
+          this.sparks.burst(f.x, f.y + 0.9, 0.2, 0xffb03a, 6);
+        }
+        if (fire) {
+          f.cool = 1.9;
           const dx = this.p.x - f.x;
           const dy = this.p.y + 0.8 - (f.y + 0.4);
           const m = Math.hypot(dx, dy) || 1;
@@ -904,17 +929,19 @@ export class Game {
         }
         if (f.y < -6) f.alive = false;
       }
-      const near = Math.abs(this.p.x - f.x) < f.w * 0.55 + 0.28 && this.p.y < f.y + f.h && this.p.y + PH > f.y;
+      const near = Math.abs(this.p.x - f.x) < f.w * 0.45 + 0.22 && this.p.y < f.y + f.h && this.p.y + PH > f.y;
       if (near) {
         if (this.starT > 0) this.wound(f, 9);
         else if (f.cool <= 0) {
           f.cool = 0.7;
-          this.damage(1);
+          this.damage(1, f.x);
         }
       }
       animateActor(f.mesh, this.time, f.kind);
+      const fw = f.wind && f.wind > 0 ? 1 - f.wind / FOE_WINDUP : 0;
+      f.mesh.scale.setScalar(1 + fw * 0.18 + (fw > 0 ? Math.sin(this.time * 40) * 0.04 : 0));
       f.mesh.position.set(f.x, f.y, 0.15);
-      f.mesh.rotation.y = f.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      f.mesh.rotation.y = f.dir > 0 ? Math.PI / 2 - FACE_TURN : -Math.PI / 2 + FACE_TURN;
       f.mesh.visible = f.alive && (f.hurt <= 0 || Math.sin(this.time * 45) > 0);
     }
   }
@@ -935,7 +962,18 @@ export class Game {
     const minX = 3;
     const maxX = (this.level?.length ?? 30) - 4;
     boss.x = Math.max(minX, Math.min(maxX, boss.x));
-    if (boss.cool <= 0) {
+    const bossInRange =
+      Math.abs(this.p.x - boss.x) < BOSS_FIRE_RANGE && Math.abs(this.p.y - boss.y) < FIRE_MAX_DY + 2 && this.onScreen(boss.x, boss.y + boss.h * 0.6);
+    if (boss.cool <= 0 && bossInRange && !(boss.wind && boss.wind > 0) && boss.wind !== -1) {
+      boss.wind = BOSS_WINDUP;
+      this.sparks.burst(boss.x, boss.y + boss.h * 0.62, 0.35, 0xffb03a, 10);
+    }
+    if (boss.wind && boss.wind > 0) {
+      boss.wind -= dt;
+      if (boss.wind <= 0) boss.wind = -1;
+    }
+    if (boss.wind === -1) {
+      boss.wind = 0;
       boss.cool = phase === 1 ? 1.55 : phase === 2 ? 1.15 : 0.85;
       const dx = this.p.x - boss.x;
       const dy = this.p.y + 0.9 - (boss.y + boss.h * 0.6);
@@ -946,11 +984,13 @@ export class Game {
       }
       if (phase >= 3 && this.foes.filter((f) => f.alive).length < 2) this.spawnFoe("shadow", boss.x - boss.dir * 1.5, 0.2);
     }
-    const touch = Math.abs(this.p.x - boss.x) < boss.w * 0.42 && this.p.y < boss.y + boss.h && this.p.y + PH > boss.y;
-    if (touch) this.damage(1);
+    const touch = Math.abs(this.p.x - boss.x) < boss.w * 0.36 && this.p.y < boss.y + boss.h && this.p.y + PH > boss.y;
+    if (touch) this.damage(1, boss.x);
     animateActor(boss.mesh, this.time, this.level?.titan ? "titan" : "boss");
     boss.mesh.position.set(boss.x, boss.y, 0);
-    boss.mesh.rotation.y = this.p.x < boss.x ? -Math.PI / 2 : Math.PI / 2;
+    const bw = boss.wind && boss.wind > 0 ? 1 - boss.wind / BOSS_WINDUP : 0;
+    boss.mesh.scale.setScalar(1 + bw * 0.1);
+    boss.mesh.rotation.y = this.p.x < boss.x ? -Math.PI / 2 + FACE_TURN : Math.PI / 2 - FACE_TURN;
   }
 
   private updateWaves(dt: number) {
@@ -1019,7 +1059,14 @@ export class Game {
     this.sparks.burst(this.p.x, this.p.y + 1, 0.4, 0xfff1c2, 12);
   }
 
-  private damage(n: number) {
+  private tmpV = new THREE.Vector3();
+  /** True when a world point projects inside the camera view (with a small margin). */
+  private onScreen(x: number, y: number) {
+    const v = this.tmpV.set(x, y, 0).project(this.camera);
+    return v.z < 1 && Math.abs(v.x) < 0.95 && Math.abs(v.y) < 0.95;
+  }
+
+  private damage(n: number, fromX?: number) {
     if (this.invuln > 0 || this.starT > 0 || this.cine) return;
     if (this.shield > 0) {
       this.shield -= 1;
@@ -1029,10 +1076,10 @@ export class Game {
     }
     this.hearts -= n;
     this.noDamage = false;
-    this.invuln = 1.15;
+    this.invuln = 1.4;
     this.shakeMag = Math.min(0.5, this.shakeMag + 0.22);
     this.p.vy = 6.5;
-    this.p.vx = -this.facing * 3.5;
+    this.p.vx = (fromX !== undefined ? Math.sign(this.p.x - fromX) || -this.facing : -this.facing) * 3.5;
     this.audio.hurt();
     if (this.hearts <= 0) {
       this.hearts = 0;

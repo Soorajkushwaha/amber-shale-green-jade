@@ -230,7 +230,8 @@ export function createHero(): HeroRig {
     const flick = 0.82 + Math.sin(a.time * 22) * 0.12 + Math.sin(a.time * 37) * 0.06;
     wick.scale.y = flick;
     light.intensity = 1.8 + Math.sin(a.time * 19) * 0.35;
-    group.rotation.y = a.facing > 0 ? Math.PI / 2 : -Math.PI / 2;
+    // 3/4 view toward the camera so the face reads while running.
+    group.rotation.y = a.facing > 0 ? Math.PI / 2 - 0.75 : -Math.PI / 2 + 0.75;
     rig.bobY = bob;
   };
 
