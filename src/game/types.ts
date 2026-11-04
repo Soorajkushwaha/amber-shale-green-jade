@@ -135,6 +135,8 @@ export type Hud = {
   power: string | null;
   hint: string | null;
   noDamage: boolean;
+  /** True for a moment right after the hero takes damage (drives the screen flash). */
+  hit: boolean;
 };
 
 export type ClearPayload = {

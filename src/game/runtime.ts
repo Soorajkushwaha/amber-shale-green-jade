@@ -9,8 +9,17 @@ const GRAVITY = 24;
 const JUMP = 11.1;
 const MOVE = 7.5;
 const SPRINT = 10.8;
-const PW = 0.48;
-const PH = 1.55;
+// Hitbox grows with the bigger hero (a bit under the visual 1.25x so existing gaps/ceilings stay passable).
+/** Enemies only open fire inside these ranges (world units) and while roughly on screen. */
+/** Turn characters ~40° toward the camera (3/4 view) so faces read. */
+const FACE_TURN = 0.95;
+const FOE_FIRE_RANGE = 8;
+const BOSS_FIRE_RANGE = 13;
+const FIRE_MAX_DY = 3.2;
+const FOE_WINDUP = 0.5;
+const BOSS_WINDUP = 0.45;
+const PW = 0.48 * 1.12;
+const PH = 1.55 * 1.18;
 
 export type StartOpts = {
   cityId: string;
@@ -40,6 +49,8 @@ type Foe = {
   w: number;
   h: number;
   mesh: THREE.Group;
+  /** Seconds left in the shot wind-up telegraph (0 = not winding up). */
+  wind?: number;
 };
 
 type Pickup = {
@@ -69,6 +80,7 @@ type Bolt = {
 };
 
 type Boss = {
+  wind?: number;
   name: string;
   hp: number;
   max: number;
@@ -106,6 +118,8 @@ declare global {
       getY: () => number;
       setKeys: (codes: string[]) => void;
       setSteer: (v: number) => void;
+      getState?: () => unknown;
+      groundAt?: (x: number) => number | null;
     };
     __gameReady?: boolean;
   }
@@ -132,7 +146,10 @@ export class Game {
   private mouseFresh = 0;
   private dirx = 1;
   private diry = 0;
+  private embers!: Embers;
   private facing = 1;
+  private lookAhead = 1.5;
+  private camY = 0;
   private raf = 0;
   private last = 0;
   private acc = 0;
@@ -253,7 +270,8 @@ export class Game {
     this.scene.add(this.dir.target);
     this.scene.add(this.wakeLight);
     this.scene.add(this.hero.group);
-    this.sparks = new Sparks(this.scene, quality === "low" ? 80 : 160);
+    this.sparks = new Sparks(this.scene, quality === "low" ? 120 : 220);
+    this.embers = new Embers(this.scene, this.glowTex(), quality === "low" ? 40 : 90);
     this.makeBoltPool();
     this.resize();
     this.setQuality(quality);
@@ -276,6 +294,32 @@ export class Game {
         },
         setSteer: (v) => {
           this.steer = v;
+        },
+        getState: () => ({
+          mode: this.mode,
+          cine: this.cine?.kind ?? null,
+          x: this.p.x,
+          y: this.p.y,
+          vy: this.p.vy,
+          grounded: this.p.grounded,
+          hearts: this.hearts,
+          facing: this.facing,
+          len: this.level?.length ?? 0,
+          foes: this.foes.filter((f) => f.alive).map((f) => ({ kind: f.kind, x: f.x, y: f.y, fly: f.fly, wind: f.wind ?? 0 })),
+          boss: this.boss ? { x: this.boss.x, y: this.boss.y, hp: this.boss.hp } : null,
+          hostile: this.bolts.filter((b) => b.alive && !b.friendly).length,
+          kills: this.kills,
+        }),
+        groundAt: (x: number) => {
+          let best: number | null = null;
+          for (const s of this.level?.solids ?? []) {
+            if (s.dead) continue;
+            if (x > s.x - s.w / 2 && x < s.x + s.w / 2) {
+              const top = s.y + s.h / 2;
+              if (top <= this.p.y + 0.6 && (best === null || top > best)) best = top;
+            }
+          }
+          return best;
         },
       };
     }
@@ -356,6 +400,8 @@ export class Game {
     this.cpX = 2.4;
     this.cpY = 0.2;
     this.facing = 1;
+    this.camY = 0;
+    this.lookAhead = 1.5;
     this.clearWorld();
     const level = buildLevel(opts.cityId, opts.areaIndex);
     this.level = level;
@@ -425,7 +471,10 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.portrait = w < h;
-    this.camera.fov = this.portrait ? 60 : 48;
+    this.camera.fov = this.portrait ? 62 : 46;
+    // In portrait, shift the image up so the hero sits above the thumb controls.
+    if (this.portrait) this.camera.setViewOffset(w, h, 0, h * 0.13, w, h);
+    else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
   };
 
@@ -534,7 +583,7 @@ export class Game {
       const hit = this.raycaster.ray.intersectPlane(this.aimPlane, this.hit);
       if (hit) {
         const dx = hit.x - this.p.x;
-        const dy = hit.y - (this.p.y + 1.05);
+        const dy = hit.y - (this.p.y + 1.3);
         const m = Math.hypot(dx, dy) || 1;
         this.dirx = dx / m;
         this.diry = dy / m;
@@ -554,6 +603,28 @@ export class Game {
     } else {
       this.dirx = this.facing;
       this.diry = 0;
+      // Gentle aim assist: lock onto the nearest villain in front so touch players can hit drones.
+      let best: { x: number; y: number } | null = null;
+      let bestD = 9;
+      for (const f of this.foes) {
+        if (!f.alive) continue;
+        const dx = (f.x - this.p.x) * this.facing;
+        if (dx < 0.3 || dx > bestD) continue;
+        if (Math.abs(f.y + f.h * 0.5 - (this.p.y + 1.3)) > 3) continue;
+        bestD = dx;
+        best = { x: f.x, y: f.y + f.h * 0.5 };
+      }
+      if (this.boss && this.bossActive) {
+        const dx = (this.boss.x - this.p.x) * this.facing;
+        if (dx > 0.3 && dx < 14 && dx < bestD + 3) best = { x: this.boss.x, y: this.boss.y + this.boss.h * 0.6 };
+      }
+      if (best) {
+        const dx = best.x - this.p.x;
+        const dy = Math.max(-1.5, Math.min(3, best.y - (this.p.y + 1.3)));
+        const m = Math.hypot(dx, dy) || 1;
+        this.dirx = dx / m;
+        this.diry = dy / m;
+      }
     }
   }
 
@@ -724,7 +795,7 @@ export class Game {
     const cool = [0.28, 0.28, 0.32, 0.38, 0.5, 0.55][lvl] ?? 0.3;
     this.shootT = cool;
     const ox = this.p.x + this.dirx * 0.55;
-    const oy = this.p.y + 1.05 + this.diry * 0.2;
+    const oy = this.p.y + 1.3 + this.diry * 0.2;
     const spawn = (dx: number, dy: number, speed: number, dmg: number, r: number, hits: number, explode: boolean) => {
       const m = Math.hypot(dx, dy) || 1;
       this.spawnBolt(ox, oy, (dx / m) * speed, (dy / m) * speed, dmg, r, true, hits, explode);
@@ -762,8 +833,14 @@ export class Game {
     bolt.explode = explode;
     bolt.seen = [];
     bolt.mesh.visible = true;
-    bolt.mesh.scale.setScalar(r * 6);
-    (bolt.mesh.material as THREE.MeshBasicMaterial).color.set(friendly ? (explode ? 0xff8a3a : 0xffe29a) : 0xe25a24);
+    bolt.mesh.scale.setScalar(r * 0.9);
+    const col = friendly ? (explode ? 0xff8a3a : 0xfff0b8) : 0xff3a2a;
+    (bolt.mesh.material as THREE.MeshBasicMaterial).color.set(col);
+    const glow = bolt.mesh.getObjectByName("glow") as THREE.Sprite | undefined;
+    if (glow) {
+      (glow.material as THREE.SpriteMaterial).color.set(friendly ? 0xffb03a : 0xff2a1a);
+      glow.scale.setScalar(friendly ? 8 : 11);
+    }
   }
 
   private updateBolts(dt: number) {
@@ -811,7 +888,7 @@ export class Game {
             b.alive = false;
           }
         }
-      } else if (Math.hypot(b.x - this.p.x, b.y - (this.p.y + 0.8)) < 0.55 + b.r) {
+      } else if (Math.hypot(b.x - this.p.x, b.y - (this.p.y + 1.0)) < 0.65 + b.r) {
         this.damage(1);
         b.alive = false;
       }
@@ -841,13 +918,15 @@ export class Game {
     f.hp -= dmg;
     f.hurt = 0.12;
     this.audio.hit();
-    this.sparks.burst(f.x, f.y + f.h * 0.6, 0.4, 0xffd27a, 8);
+    this.sparks.burst(f.x, f.y + f.h * 0.6, 0.4, 0xffd27a, 12);
+    this.shakeMag = Math.min(0.2, this.shakeMag + 0.03);
     if (f.hp <= 0) {
       f.alive = false;
       f.mesh.visible = false;
       this.kills += 1;
       this.shakeMag = Math.min(0.35, this.shakeMag + 0.08);
-      this.sparks.burst(f.x, f.y + 0.6, 0.4, 0xe7b04a, 14);
+      this.sparks.burst(f.x, f.y + 0.6, 0.4, 0xe7b04a, 22);
+      this.sparks.burst(f.x, f.y + 1.0, 0.4, 0xfff1c2, 10);
     }
   }
 
@@ -883,12 +962,26 @@ export class Game {
       }
       if (f.fly) {
         f.y += Math.sin(this.time * 3 + f.x) * 0.6 * dt;
-        if (f.cool <= 0 && chase) {
-          f.cool = 1.75;
+        const inRange =
+          Math.abs(this.p.x - f.x) < FOE_FIRE_RANGE && Math.abs(this.p.y - f.y) < FIRE_MAX_DY && this.onScreen(f.x, f.y + 0.5);
+        let fire = false;
+        if (f.wind && f.wind > 0) {
+          f.wind -= dt;
+          if (!inRange) f.wind = 0;
+          else if (f.wind <= 0) {
+            f.wind = 0;
+            fire = true;
+          }
+        } else if (f.cool <= 0 && inRange) {
+          f.wind = FOE_WINDUP;
+          this.sparks.burst(f.x, f.y + 0.9, 0.2, 0xffb03a, 6);
+        }
+        if (fire) {
+          f.cool = 2.4;
           const dx = this.p.x - f.x;
           const dy = this.p.y + 0.8 - (f.y + 0.4);
           const m = Math.hypot(dx, dy) || 1;
-          this.spawnBolt(f.x, f.y + 0.5, (dx / m) * 7.5, (dy / m) * 7.5, 1, 0.16, false, 1, false);
+          this.spawnBolt(f.x, f.y + 0.5, (dx / m) * 6, (dy / m) * 6, 1, 0.16, false, 1, false);
         }
       } else {
         f.vy -= GRAVITY * dt;
@@ -903,17 +996,19 @@ export class Game {
         }
         if (f.y < -6) f.alive = false;
       }
-      const near = Math.abs(this.p.x - f.x) < f.w * 0.55 + 0.28 && this.p.y < f.y + f.h && this.p.y + PH > f.y;
+      const near = Math.abs(this.p.x - f.x) < f.w * 0.45 + 0.22 && this.p.y < f.y + f.h && this.p.y + PH > f.y;
       if (near) {
         if (this.starT > 0) this.wound(f, 9);
         else if (f.cool <= 0) {
           f.cool = 0.7;
-          this.damage(1);
+          this.damage(1, f.x);
         }
       }
       animateActor(f.mesh, this.time, f.kind);
+      const fw = f.wind && f.wind > 0 ? 1 - f.wind / FOE_WINDUP : 0;
+      f.mesh.scale.setScalar(1 + fw * 0.18 + (fw > 0 ? Math.sin(this.time * 40) * 0.04 : 0));
       f.mesh.position.set(f.x, f.y, 0.15);
-      f.mesh.rotation.y = f.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      f.mesh.rotation.y = f.dir > 0 ? Math.PI / 2 - FACE_TURN : -Math.PI / 2 + FACE_TURN;
       f.mesh.visible = f.alive && (f.hurt <= 0 || Math.sin(this.time * 45) > 0);
     }
   }
@@ -934,7 +1029,18 @@ export class Game {
     const minX = 3;
     const maxX = (this.level?.length ?? 30) - 4;
     boss.x = Math.max(minX, Math.min(maxX, boss.x));
-    if (boss.cool <= 0) {
+    const bossInRange =
+      Math.abs(this.p.x - boss.x) < BOSS_FIRE_RANGE && Math.abs(this.p.y - boss.y) < FIRE_MAX_DY + 2 && this.onScreen(boss.x, boss.y + boss.h * 0.6);
+    if (boss.cool <= 0 && bossInRange && !(boss.wind && boss.wind > 0) && boss.wind !== -1) {
+      boss.wind = BOSS_WINDUP;
+      this.sparks.burst(boss.x, boss.y + boss.h * 0.62, 0.35, 0xffb03a, 10);
+    }
+    if (boss.wind && boss.wind > 0) {
+      boss.wind -= dt;
+      if (boss.wind <= 0) boss.wind = -1;
+    }
+    if (boss.wind === -1) {
+      boss.wind = 0;
       boss.cool = phase === 1 ? 1.55 : phase === 2 ? 1.15 : 0.85;
       const dx = this.p.x - boss.x;
       const dy = this.p.y + 0.9 - (boss.y + boss.h * 0.6);
@@ -945,11 +1051,13 @@ export class Game {
       }
       if (phase >= 3 && this.foes.filter((f) => f.alive).length < 2) this.spawnFoe("shadow", boss.x - boss.dir * 1.5, 0.2);
     }
-    const touch = Math.abs(this.p.x - boss.x) < boss.w * 0.42 && this.p.y < boss.y + boss.h && this.p.y + PH > boss.y;
-    if (touch) this.damage(1);
+    const touch = Math.abs(this.p.x - boss.x) < boss.w * 0.36 && this.p.y < boss.y + boss.h && this.p.y + PH > boss.y;
+    if (touch) this.damage(1, boss.x);
     animateActor(boss.mesh, this.time, this.level?.titan ? "titan" : "boss");
     boss.mesh.position.set(boss.x, boss.y, 0);
-    boss.mesh.rotation.y = this.p.x < boss.x ? -Math.PI / 2 : Math.PI / 2;
+    const bw = boss.wind && boss.wind > 0 ? 1 - boss.wind / BOSS_WINDUP : 0;
+    boss.mesh.scale.setScalar(1 + bw * 0.1);
+    boss.mesh.rotation.y = this.p.x < boss.x ? -Math.PI / 2 + FACE_TURN : Math.PI / 2 - FACE_TURN;
   }
 
   private updateWaves(dt: number) {
@@ -1018,7 +1126,14 @@ export class Game {
     this.sparks.burst(this.p.x, this.p.y + 1, 0.4, 0xfff1c2, 12);
   }
 
-  private damage(n: number) {
+  private tmpV = new THREE.Vector3();
+  /** True when a world point projects inside the camera view (with a small margin). */
+  private onScreen(x: number, y: number) {
+    const v = this.tmpV.set(x, y, 0).project(this.camera);
+    return v.z < 1 && Math.abs(v.x) < 0.95 && Math.abs(v.y) < 0.95;
+  }
+
+  private damage(n: number, fromX?: number) {
     if (this.invuln > 0 || this.starT > 0 || this.cine) return;
     if (this.shield > 0) {
       this.shield -= 1;
@@ -1027,11 +1142,12 @@ export class Game {
       return;
     }
     this.hearts -= n;
+    this.sparks.burst(this.p.x, this.p.y + 1.1, 0.5, 0xff4a3a, 16);
     this.noDamage = false;
-    this.invuln = 1.15;
+    this.invuln = 1.4;
     this.shakeMag = Math.min(0.5, this.shakeMag + 0.22);
     this.p.vy = 6.5;
-    this.p.vx = -this.facing * 3.5;
+    this.p.vx = (fromX !== undefined ? Math.sign(this.p.x - fromX) || -this.facing : -this.facing) * 3.5;
     this.audio.hurt();
     if (this.hearts <= 0) {
       this.hearts = 0;
@@ -1230,21 +1346,26 @@ export class Game {
       facing: this.facing,
     });
     if (this.mode === "play") {
-      const blink = this.invuln > 0 && Math.sin(this.time * 28) > 0;
+      const blink = this.invuln > 0 && Math.sin(this.time * 22) > 0.6;
       this.hero.group.visible = !blink;
       this.hero.group.position.set(this.p.x, this.p.y + this.hero.bobY, 0.35);
-      const lookX = THREE.MathUtils.clamp(this.p.x + this.facing * 1.6, 1, (this.level?.length ?? 20) - 1);
-      const lookY = this.p.y + 1.25;
-      const dist = this.portrait ? 16.5 : this.cine?.kind === "boss" ? 17 : 12.8;
-      const lift = this.cine?.kind === "clear" ? 2.4 : this.cine?.kind === "boss" ? 2.2 : 1.45;
+      const ahead = this.portrait ? 0.9 : 1.8;
+      this.lookAhead = approach(this.lookAhead, this.facing * ahead, dt * 2.2);
+      const lookX = THREE.MathUtils.clamp(this.p.x + this.lookAhead, 1, (this.level?.length ?? 20) - 1);
+      // Smooth vertical follow so jumps don't jerk the frame.
+      this.camY += (this.p.y - this.camY) * (1 - Math.exp(-4 * Math.max(dt, 0.001)));
+      const lookY = this.camY + 1.35;
+      const bossNear = this.boss && this.bossActive && Math.abs(this.boss.x - this.p.x) < 12;
+      const dist = this.cine?.kind === "boss" || bossNear ? (this.portrait ? 14.5 : 14) : this.portrait ? 11 : 10.2;
+      const lift = this.cine?.kind === "clear" ? 2 : this.cine?.kind === "boss" || bossNear ? 1.8 : 1.05;
       this.desired.set(lookX, lookY + lift, dist);
       this.look.set(lookX, lookY, 0);
     } else {
       this.hero.group.visible = true;
       this.hero.group.position.set(0.2, this.hero.bobY, 0.35);
       const a = this.time * 0.18;
-      this.desired.set(Math.sin(a) * 1.6, 2.15, 8.2);
-      this.look.set(0.2, 1.25, 0);
+      this.desired.set(Math.sin(a) * 1.6, 2.5, 9.4);
+      this.look.set(0.2, 1.5, 0);
     }
     const k = 1 - Math.exp(-3.4 * Math.max(dt, 0.001));
     this.camera.position.lerp(this.desired, k);
@@ -1276,6 +1397,7 @@ export class Game {
       b.mesh.position.set(b.x, b.y, 0.45);
     }
     this.sparks.update(dt);
+    this.embers.update(dt, this.camera.position.x, this.time);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -1290,6 +1412,7 @@ export class Game {
         ? "Buildings light as Goranksh crosses them. Touch a street diya to flare the block."
         : null;
     const hud: Hud = {
+      hit: this.invuln > 1.05 && this.mode === "play",
       mode: this.mode,
       hearts: this.hearts,
       maxHearts: this.maxHearts,
@@ -1312,8 +1435,49 @@ export class Game {
     void n;
   }
 
+  private skyTex: THREE.Texture | null = null;
+  /** Night-sky gradient with stars, a warm moon and a festive horizon glow. */
+  private skyTexture(theme: Theme) {
+    this.skyTex?.dispose();
+    const c = document.createElement("canvas");
+    c.width = 512;
+    c.height = 512;
+    const ctx = c.getContext("2d")!;
+    const top = new THREE.Color(theme.sky).multiplyScalar(0.35);
+    const mid = new THREE.Color(theme.sky);
+    const low = new THREE.Color(theme.sky).lerp(new THREE.Color("#e2742a"), 0.45);
+    const grd = ctx.createLinearGradient(0, 0, 0, 512);
+    grd.addColorStop(0, `#${top.getHexString()}`);
+    grd.addColorStop(0.55, `#${mid.getHexString()}`);
+    grd.addColorStop(1, `#${low.getHexString()}`);
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, 512, 512);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 110; i++) {
+      const x = rnd() * 512;
+      const y = rnd() * 330;
+      const r = rnd() * 0.6 + 0.2;
+      ctx.fillStyle = `rgba(255,${230 + Math.floor(rnd() * 25)},${190 + Math.floor(rnd() * 60)},${0.35 + rnd() * 0.6})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const moon = ctx.createRadialGradient(400, 90, 0, 400, 90, 70);
+    moon.addColorStop(0, "rgba(255,236,200,0.95)");
+    moon.addColorStop(0.28, "rgba(255,220,160,0.75)");
+    moon.addColorStop(0.32, "rgba(255,200,130,0.25)");
+    moon.addColorStop(1, "rgba(255,180,90,0)");
+    ctx.fillStyle = moon;
+    ctx.fillRect(300, 0, 212, 200);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.skyTex = tex;
+    return tex;
+  }
+
   private paintTheme(theme: Theme) {
-    this.scene.background = new THREE.Color(theme.sky);
+    this.scene.background = this.skyTexture(theme);
     this.scene.fog = new THREE.Fog(theme.fog, 18, this.portrait ? 46 : 62);
     this.hemi.color.set(theme.sky);
     this.hemi.groundColor.set(theme.ground);
@@ -1694,10 +1858,32 @@ export class Game {
     return mesh;
   }
 
+  private _glow: THREE.Texture | null = null;
+  private glowTex() {
+    if (this._glow) return this._glow;
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d")!;
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, "rgba(255,255,255,1)");
+    grd.addColorStop(0.3, "rgba(255,255,255,0.5)");
+    grd.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 64, 64);
+    this._glow = new THREE.CanvasTexture(c);
+    return this._glow;
+  }
+
   private makeBoltPool() {
     for (let i = 0; i < 36; i++) {
       const mat = new THREE.MeshBasicMaterial({ color: 0xffe29a });
       const mesh = new THREE.Mesh(this.lib.sphere, mat);
+      const glow = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: this.glowTex(), color: 0xffe29a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      glow.scale.setScalar(2.2);
+      glow.name = "glow";
+      mesh.add(glow);
       mesh.visible = false;
       mesh.scale.setScalar(0.2);
       this.scene.add(mesh);
@@ -1738,7 +1924,7 @@ class Sparks {
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute("position", new THREE.BufferAttribute(this.pos, 3));
     this.geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.PointsMaterial({ size: 0.14, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const mat = new THREE.PointsMaterial({ size: 0.2, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.points = new THREE.Points(this.geo, mat);
     parent.add(this.points);
   }
@@ -1776,6 +1962,51 @@ class Sparks {
       dirty = true;
     }
     if (dirty) (this.geo.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+  }
+}
+
+/** Floating diya embers drifting up through the scene for Diwali ambience. */
+class Embers {
+  points: THREE.Points;
+  pos: Float32Array;
+  seed: Float32Array;
+  n: number;
+  constructor(parent: THREE.Object3D, tex: THREE.Texture, n: number) {
+    this.n = n;
+    this.pos = new Float32Array(n * 3);
+    this.seed = new Float32Array(n);
+    const col = new Float32Array(n * 3);
+    const palette = [new THREE.Color(0xffb03a), new THREE.Color(0xffd27a), new THREE.Color(0xe25a24), new THREE.Color(0xfff1c2)];
+    for (let i = 0; i < n; i++) {
+      this.pos[i * 3] = (Math.random() - 0.5) * 36;
+      this.pos[i * 3 + 1] = Math.random() * 12 - 1;
+      this.pos[i * 3 + 2] = -6 + Math.random() * 9;
+      this.seed[i] = Math.random() * 100;
+      const c = palette[i % palette.length]!;
+      col.set([c.r, c.g, c.b], i * 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(this.pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.28, map: tex, vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.points = new THREE.Points(geo, mat);
+    this.points.frustumCulled = false;
+    parent.add(this.points);
+  }
+  update(dt: number, cx: number, t: number) {
+    for (let i = 0; i < this.n; i++) {
+      const s = this.seed[i]!;
+      let x = this.pos[i * 3]!;
+      let y = this.pos[i * 3 + 1]!;
+      y += dt * (0.35 + (s % 1) * 0.5);
+      x += Math.sin(t * 0.8 + s) * dt * 0.3;
+      if (y > 11) y = -1;
+      if (x < cx - 18) x += 36;
+      else if (x > cx + 18) x -= 36;
+      this.pos[i * 3] = x;
+      this.pos[i * 3 + 1] = y;
+    }
+    (this.points.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
   }
 }
 

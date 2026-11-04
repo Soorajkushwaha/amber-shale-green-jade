@@ -223,9 +223,7 @@ export function GameView() {
         <canvas ref={canvasRef} />
       </div>
 
-      {portrait && screen === "play" ? (
-        <div className="rotate-note chip">Rotate for a wider night run</div>
-      ) : null}
+      {screen === "play" && hud?.hit ? <div className="hit-flash" aria-hidden /> : null}
 
       {screen === "boot" ? (
         <section className="veil">
@@ -406,9 +404,9 @@ export function GameView() {
       ) : null}
 
       {screen === "play" || screen === "pause" ? (
-        <div className={coarse && screen === "play" ? "hud hud-touch" : "hud"}>
+        <div className={`${coarse && screen === "play" ? "hud hud-touch" : "hud"}${portrait ? " hud-portrait" : ""}`}>
           <div className="hud-top">
-            <div className="chip">
+            <div className="chip chip-lives">
               <div className="hearts" aria-label="Lives">
                 {Array.from({ length: hud?.maxHearts ?? 5 }, (_, i) => (
                   <Heart key={i} className={i < (hud?.hearts ?? 0) ? "size-4 fill-current" : "dim size-4"} />
@@ -419,8 +417,8 @@ export function GameView() {
               </p>
               <p className="text-sm text-gold">{hud?.score ?? 0}</p>
             </div>
-            <div className="chip min-w-40 flex-1">
-              <p className="text-xs tracking-wide text-gold">STREET LIGHT {hud?.illum ?? 0}%</p>
+            <div className="chip chip-light min-w-40 flex-1">
+              <p className="hud-label">🪔 STREET LIGHT {hud?.illum ?? 0}%</p>
               <div className="meter mt-1">
                 <span style={{ width: `${hud?.illum ?? 0}%` }} />
               </div>
@@ -452,8 +450,8 @@ export function GameView() {
               {hud?.hint ? <p className="mt-1 max-w-xs">{hud.hint}</p> : null}
             </div>
             {hud?.boss ? (
-              <div className="chip min-w-36 flex-1">
-                <p className="text-sm">
+              <div className="chip chip-boss min-w-36 flex-1">
+                <p className="text-sm font-semibold">
                   {hud.boss.name} · phase {hud.boss.phase}
                 </p>
                 <div className="meter mt-1">
@@ -467,7 +465,7 @@ export function GameView() {
 
       {bossName && screen === "play" ? (
         <div className="pointer-events-none absolute inset-x-0 top-24 flex justify-center">
-          <div className="chip text-center">
+          <div className="chip boss-banner text-center">
             <p className="kicker">Boss</p>
             <p className="font-display text-2xl">{bossName}</p>
           </div>
