@@ -118,6 +118,8 @@ declare global {
       getY: () => number;
       setKeys: (codes: string[]) => void;
       setSteer: (v: number) => void;
+      getState?: () => unknown;
+      groundAt?: (x: number) => number | null;
     };
     __gameReady?: boolean;
   }
@@ -144,7 +146,10 @@ export class Game {
   private mouseFresh = 0;
   private dirx = 1;
   private diry = 0;
+  private embers!: Embers;
   private facing = 1;
+  private lookAhead = 1.5;
+  private camY = 0;
   private raf = 0;
   private last = 0;
   private acc = 0;
@@ -265,7 +270,8 @@ export class Game {
     this.scene.add(this.dir.target);
     this.scene.add(this.wakeLight);
     this.scene.add(this.hero.group);
-    this.sparks = new Sparks(this.scene, quality === "low" ? 80 : 160);
+    this.sparks = new Sparks(this.scene, quality === "low" ? 120 : 220);
+    this.embers = new Embers(this.scene, this.glowTex(), quality === "low" ? 40 : 90);
     this.makeBoltPool();
     this.resize();
     this.setQuality(quality);
@@ -288,6 +294,32 @@ export class Game {
         },
         setSteer: (v) => {
           this.steer = v;
+        },
+        getState: () => ({
+          mode: this.mode,
+          cine: this.cine?.kind ?? null,
+          x: this.p.x,
+          y: this.p.y,
+          vy: this.p.vy,
+          grounded: this.p.grounded,
+          hearts: this.hearts,
+          facing: this.facing,
+          len: this.level?.length ?? 0,
+          foes: this.foes.filter((f) => f.alive).map((f) => ({ kind: f.kind, x: f.x, y: f.y, fly: f.fly, wind: f.wind ?? 0 })),
+          boss: this.boss ? { x: this.boss.x, y: this.boss.y, hp: this.boss.hp } : null,
+          hostile: this.bolts.filter((b) => b.alive && !b.friendly).length,
+          kills: this.kills,
+        }),
+        groundAt: (x: number) => {
+          let best: number | null = null;
+          for (const s of this.level?.solids ?? []) {
+            if (s.dead) continue;
+            if (x > s.x - s.w / 2 && x < s.x + s.w / 2) {
+              const top = s.y + s.h / 2;
+              if (top <= this.p.y + 0.6 && (best === null || top > best)) best = top;
+            }
+          }
+          return best;
         },
       };
     }
@@ -368,6 +400,8 @@ export class Game {
     this.cpX = 2.4;
     this.cpY = 0.2;
     this.facing = 1;
+    this.camY = 0;
+    this.lookAhead = 1.5;
     this.clearWorld();
     const level = buildLevel(opts.cityId, opts.areaIndex);
     this.level = level;
@@ -437,7 +471,10 @@ export class Game {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.portrait = w < h;
-    this.camera.fov = this.portrait ? 60 : 48;
+    this.camera.fov = this.portrait ? 62 : 46;
+    // In portrait, shift the image up so the hero sits above the thumb controls.
+    if (this.portrait) this.camera.setViewOffset(w, h, 0, h * 0.13, w, h);
+    else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
   };
 
@@ -566,6 +603,28 @@ export class Game {
     } else {
       this.dirx = this.facing;
       this.diry = 0;
+      // Gentle aim assist: lock onto the nearest villain in front so touch players can hit drones.
+      let best: { x: number; y: number } | null = null;
+      let bestD = 9;
+      for (const f of this.foes) {
+        if (!f.alive) continue;
+        const dx = (f.x - this.p.x) * this.facing;
+        if (dx < 0.3 || dx > bestD) continue;
+        if (Math.abs(f.y + f.h * 0.5 - (this.p.y + 1.3)) > 3) continue;
+        bestD = dx;
+        best = { x: f.x, y: f.y + f.h * 0.5 };
+      }
+      if (this.boss && this.bossActive) {
+        const dx = (this.boss.x - this.p.x) * this.facing;
+        if (dx > 0.3 && dx < 14 && dx < bestD + 3) best = { x: this.boss.x, y: this.boss.y + this.boss.h * 0.6 };
+      }
+      if (best) {
+        const dx = best.x - this.p.x;
+        const dy = Math.max(-1.5, Math.min(3, best.y - (this.p.y + 1.3)));
+        const m = Math.hypot(dx, dy) || 1;
+        this.dirx = dx / m;
+        this.diry = dy / m;
+      }
     }
   }
 
@@ -774,8 +833,14 @@ export class Game {
     bolt.explode = explode;
     bolt.seen = [];
     bolt.mesh.visible = true;
-    bolt.mesh.scale.setScalar(r * 6);
-    (bolt.mesh.material as THREE.MeshBasicMaterial).color.set(friendly ? (explode ? 0xff8a3a : 0xffe29a) : 0xe25a24);
+    bolt.mesh.scale.setScalar(r * 0.9);
+    const col = friendly ? (explode ? 0xff8a3a : 0xfff0b8) : 0xff3a2a;
+    (bolt.mesh.material as THREE.MeshBasicMaterial).color.set(col);
+    const glow = bolt.mesh.getObjectByName("glow") as THREE.Sprite | undefined;
+    if (glow) {
+      (glow.material as THREE.SpriteMaterial).color.set(friendly ? 0xffb03a : 0xff2a1a);
+      glow.scale.setScalar(friendly ? 8 : 11);
+    }
   }
 
   private updateBolts(dt: number) {
@@ -853,13 +918,15 @@ export class Game {
     f.hp -= dmg;
     f.hurt = 0.12;
     this.audio.hit();
-    this.sparks.burst(f.x, f.y + f.h * 0.6, 0.4, 0xffd27a, 8);
+    this.sparks.burst(f.x, f.y + f.h * 0.6, 0.4, 0xffd27a, 12);
+    this.shakeMag = Math.min(0.2, this.shakeMag + 0.03);
     if (f.hp <= 0) {
       f.alive = false;
       f.mesh.visible = false;
       this.kills += 1;
       this.shakeMag = Math.min(0.35, this.shakeMag + 0.08);
-      this.sparks.burst(f.x, f.y + 0.6, 0.4, 0xe7b04a, 14);
+      this.sparks.burst(f.x, f.y + 0.6, 0.4, 0xe7b04a, 22);
+      this.sparks.burst(f.x, f.y + 1.0, 0.4, 0xfff1c2, 10);
     }
   }
 
@@ -910,11 +977,11 @@ export class Game {
           this.sparks.burst(f.x, f.y + 0.9, 0.2, 0xffb03a, 6);
         }
         if (fire) {
-          f.cool = 1.9;
+          f.cool = 2.4;
           const dx = this.p.x - f.x;
           const dy = this.p.y + 0.8 - (f.y + 0.4);
           const m = Math.hypot(dx, dy) || 1;
-          this.spawnBolt(f.x, f.y + 0.5, (dx / m) * 7.5, (dy / m) * 7.5, 1, 0.16, false, 1, false);
+          this.spawnBolt(f.x, f.y + 0.5, (dx / m) * 6, (dy / m) * 6, 1, 0.16, false, 1, false);
         }
       } else {
         f.vy -= GRAVITY * dt;
@@ -1075,6 +1142,7 @@ export class Game {
       return;
     }
     this.hearts -= n;
+    this.sparks.burst(this.p.x, this.p.y + 1.1, 0.5, 0xff4a3a, 16);
     this.noDamage = false;
     this.invuln = 1.4;
     this.shakeMag = Math.min(0.5, this.shakeMag + 0.22);
@@ -1278,13 +1346,18 @@ export class Game {
       facing: this.facing,
     });
     if (this.mode === "play") {
-      const blink = this.invuln > 0 && Math.sin(this.time * 28) > 0;
+      const blink = this.invuln > 0 && Math.sin(this.time * 22) > 0.6;
       this.hero.group.visible = !blink;
       this.hero.group.position.set(this.p.x, this.p.y + this.hero.bobY, 0.35);
-      const lookX = THREE.MathUtils.clamp(this.p.x + this.facing * 1.6, 1, (this.level?.length ?? 20) - 1);
-      const lookY = this.p.y + 1.45;
-      const dist = this.portrait ? 17.5 : this.cine?.kind === "boss" ? 18 : 13.8;
-      const lift = this.cine?.kind === "clear" ? 2.4 : this.cine?.kind === "boss" ? 2.2 : 1.45;
+      const ahead = this.portrait ? 0.9 : 1.8;
+      this.lookAhead = approach(this.lookAhead, this.facing * ahead, dt * 2.2);
+      const lookX = THREE.MathUtils.clamp(this.p.x + this.lookAhead, 1, (this.level?.length ?? 20) - 1);
+      // Smooth vertical follow so jumps don't jerk the frame.
+      this.camY += (this.p.y - this.camY) * (1 - Math.exp(-4 * Math.max(dt, 0.001)));
+      const lookY = this.camY + 1.35;
+      const bossNear = this.boss && this.bossActive && Math.abs(this.boss.x - this.p.x) < 12;
+      const dist = this.cine?.kind === "boss" || bossNear ? (this.portrait ? 14.5 : 14) : this.portrait ? 11 : 10.2;
+      const lift = this.cine?.kind === "clear" ? 2 : this.cine?.kind === "boss" || bossNear ? 1.8 : 1.05;
       this.desired.set(lookX, lookY + lift, dist);
       this.look.set(lookX, lookY, 0);
     } else {
@@ -1324,6 +1397,7 @@ export class Game {
       b.mesh.position.set(b.x, b.y, 0.45);
     }
     this.sparks.update(dt);
+    this.embers.update(dt, this.camera.position.x, this.time);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -1338,6 +1412,7 @@ export class Game {
         ? "Buildings light as Goranksh crosses them. Touch a street diya to flare the block."
         : null;
     const hud: Hud = {
+      hit: this.invuln > 1.05 && this.mode === "play",
       mode: this.mode,
       hearts: this.hearts,
       maxHearts: this.maxHearts,
@@ -1783,10 +1858,32 @@ export class Game {
     return mesh;
   }
 
+  private _glow: THREE.Texture | null = null;
+  private glowTex() {
+    if (this._glow) return this._glow;
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g = c.getContext("2d")!;
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, "rgba(255,255,255,1)");
+    grd.addColorStop(0.3, "rgba(255,255,255,0.5)");
+    grd.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 64, 64);
+    this._glow = new THREE.CanvasTexture(c);
+    return this._glow;
+  }
+
   private makeBoltPool() {
     for (let i = 0; i < 36; i++) {
       const mat = new THREE.MeshBasicMaterial({ color: 0xffe29a });
       const mesh = new THREE.Mesh(this.lib.sphere, mat);
+      const glow = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: this.glowTex(), color: 0xffe29a, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      glow.scale.setScalar(2.2);
+      glow.name = "glow";
+      mesh.add(glow);
       mesh.visible = false;
       mesh.scale.setScalar(0.2);
       this.scene.add(mesh);
@@ -1827,7 +1924,7 @@ class Sparks {
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute("position", new THREE.BufferAttribute(this.pos, 3));
     this.geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.PointsMaterial({ size: 0.14, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const mat = new THREE.PointsMaterial({ size: 0.2, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.points = new THREE.Points(this.geo, mat);
     parent.add(this.points);
   }
@@ -1865,6 +1962,51 @@ class Sparks {
       dirty = true;
     }
     if (dirty) (this.geo.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+  }
+}
+
+/** Floating diya embers drifting up through the scene for Diwali ambience. */
+class Embers {
+  points: THREE.Points;
+  pos: Float32Array;
+  seed: Float32Array;
+  n: number;
+  constructor(parent: THREE.Object3D, tex: THREE.Texture, n: number) {
+    this.n = n;
+    this.pos = new Float32Array(n * 3);
+    this.seed = new Float32Array(n);
+    const col = new Float32Array(n * 3);
+    const palette = [new THREE.Color(0xffb03a), new THREE.Color(0xffd27a), new THREE.Color(0xe25a24), new THREE.Color(0xfff1c2)];
+    for (let i = 0; i < n; i++) {
+      this.pos[i * 3] = (Math.random() - 0.5) * 36;
+      this.pos[i * 3 + 1] = Math.random() * 12 - 1;
+      this.pos[i * 3 + 2] = -6 + Math.random() * 9;
+      this.seed[i] = Math.random() * 100;
+      const c = palette[i % palette.length]!;
+      col.set([c.r, c.g, c.b], i * 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(this.pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.PointsMaterial({ size: 0.28, map: tex, vertexColors: true, transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.points = new THREE.Points(geo, mat);
+    this.points.frustumCulled = false;
+    parent.add(this.points);
+  }
+  update(dt: number, cx: number, t: number) {
+    for (let i = 0; i < this.n; i++) {
+      const s = this.seed[i]!;
+      let x = this.pos[i * 3]!;
+      let y = this.pos[i * 3 + 1]!;
+      y += dt * (0.35 + (s % 1) * 0.5);
+      x += Math.sin(t * 0.8 + s) * dt * 0.3;
+      if (y > 11) y = -1;
+      if (x < cx - 18) x += 36;
+      else if (x > cx + 18) x -= 36;
+      this.pos[i * 3] = x;
+      this.pos[i * 3 + 1] = y;
+    }
+    (this.points.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
   }
 }
 

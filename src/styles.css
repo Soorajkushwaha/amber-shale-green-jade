@@ -555,3 +555,39 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   .panel, .boss-banner, .meter > span, .hearts svg.fill-current { animation: none; }
 }
+
+/* Damage flash */
+.hit-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  background: radial-gradient(120% 90% at 50% 50%, transparent 45%, rgba(226, 40, 30, 0.55) 100%);
+  animation: hit-flash 420ms ease-out both;
+}
+@keyframes hit-flash {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Portrait / 9:16 layout */
+@media (orientation: portrait) {
+  .hud { padding: max(0.5rem, env(safe-area-inset-top)) 0.5rem 0.5rem; }
+  .hud-top { flex-wrap: wrap; gap: 0.4rem; }
+  .hud-top .chip { padding: 0.35rem 0.55rem; }
+  .hud-top .chip-light { order: 3; flex-basis: 100%; min-width: 0; display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: 0.6rem; }
+  .hud-top .chip-light .meter { margin-top: 0; }
+  .hud-top .chip-light p { margin-top: 0; font-size: 0.75rem; white-space: nowrap; }
+  .hud-top .chip-light .muted { display: none; }
+  .chip-lives { display: flex; align-items: center; gap: 0.6rem; }
+  .chip-lives p { margin-top: 0; }
+  .hud-top .icon-btn { margin-left: auto; }
+  .hud-touch { padding-bottom: 9.5rem; }
+  .hud-bottom .chip { font-size: 0.78rem; max-width: 70vw; }
+  .touch { padding: 0.5rem 0.7rem max(0.9rem, env(safe-area-inset-bottom)); }
+  .stick { width: 7.5rem; height: 7.5rem; }
+  .pad { width: 4.1rem; height: 4.1rem; }
+  .pad.jump { width: 5rem; height: 5rem; }
+  .panel { max-height: calc(100dvh - 1.5rem); padding: 1rem; }
+  .brand-logo { width: min(70%, 14rem); }
+}

@@ -223,9 +223,7 @@ export function GameView() {
         <canvas ref={canvasRef} />
       </div>
 
-      {portrait && screen === "play" ? (
-        <div className="rotate-note chip">Rotate for a wider night run</div>
-      ) : null}
+      {screen === "play" && hud?.hit ? <div className="hit-flash" aria-hidden /> : null}
 
       {screen === "boot" ? (
         <section className="veil">
@@ -406,7 +404,7 @@ export function GameView() {
       ) : null}
 
       {screen === "play" || screen === "pause" ? (
-        <div className={coarse && screen === "play" ? "hud hud-touch" : "hud"}>
+        <div className={`${coarse && screen === "play" ? "hud hud-touch" : "hud"}${portrait ? " hud-portrait" : ""}`}>
           <div className="hud-top">
             <div className="chip chip-lives">
               <div className="hearts" aria-label="Lives">

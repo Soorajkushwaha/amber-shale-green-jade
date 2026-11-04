@@ -96,7 +96,7 @@ export function makeActor(kind: ActorKind): THREE.Group {
   else boss(body, kind === "titan");
   const rim = RIM[kind];
   const outline = m(`rim-${rim}`, () =>
-    new THREE.MeshBasicMaterial({ color: rim, side: THREE.BackSide, transparent: true, opacity: 0.85, toneMapped: false, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: rim, side: THREE.BackSide, transparent: true, opacity: 1, toneMapped: false, depthWrite: false }),
   );
   const solids: THREE.Mesh[] = [];
   root.traverse((obj) => {
@@ -111,7 +111,7 @@ export function makeActor(kind: ActorKind): THREE.Group {
   // Glowing rim outline: back-face shell slightly larger than each body part (cheap, no real lights).
   for (const mesh of solids) {
     const shell = new THREE.Mesh(mesh.geometry, outline);
-    shell.scale.setScalar(1.09);
+    shell.scale.setScalar(1.12);
     shell.castShadow = false;
     shell.renderOrder = -1;
     mesh.add(shell);

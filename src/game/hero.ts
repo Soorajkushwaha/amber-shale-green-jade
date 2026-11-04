@@ -83,15 +83,29 @@ export function createHero(): HeroRig {
   mesh(geo(new THREE.BoxGeometry(0.2, 0.06, 0.08)), hair, headP, 0, 0.2, 0.06);
   mesh(geo(new THREE.SphereGeometry(0.03, 8, 6)), skin, headP, -0.12, 0.1, 0);
   mesh(geo(new THREE.SphereGeometry(0.03, 8, 6)), skin, headP, 0.12, 0.1, 0);
-  const eyeL = mesh(geo(new THREE.SphereGeometry(0.02, 8, 6)), white, headP, -0.045, 0.12, 0.1);
-  const eyeR = mesh(geo(new THREE.SphereGeometry(0.02, 8, 6)), white, headP, 0.045, 0.12, 0.1);
-  mesh(geo(new THREE.SphereGeometry(0.011, 8, 6)), dark, eyeL, 0, 0, 0.012);
-  mesh(geo(new THREE.SphereGeometry(0.011, 8, 6)), dark, eyeR, 0, 0, 0.012);
-  mesh(geo(new THREE.BoxGeometry(0.05, 0.012, 0.02)), hair, headP, -0.045, 0.15, 0.1);
-  mesh(geo(new THREE.BoxGeometry(0.05, 0.012, 0.02)), hair, headP, 0.045, 0.15, 0.1);
+  // Bigger, expressive eyes with catch-lights and confident brows.
+  const eyeL = mesh(geo(new THREE.SphereGeometry(0.028, 10, 8)), white, headP, -0.047, 0.125, 0.098);
+  const eyeR = mesh(geo(new THREE.SphereGeometry(0.028, 10, 8)), white, headP, 0.047, 0.125, 0.098);
+  eyeL.scale.set(1, 1.15, 0.6);
+  eyeR.scale.set(1, 1.15, 0.6);
+  const irisMat = mat(new THREE.MeshBasicMaterial({ color: 0x3a2008 }));
+  const shine = mat(new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  for (const e of [eyeL, eyeR]) {
+    mesh(geo(new THREE.SphereGeometry(0.016, 8, 6)), irisMat, e, 0, -0.002, 0.02);
+    mesh(geo(new THREE.SphereGeometry(0.009, 6, 6)), dark, e, 0, -0.002, 0.03);
+    mesh(geo(new THREE.SphereGeometry(0.005, 6, 4)), shine, e, 0.007, 0.008, 0.034);
+  }
+  const browL = mesh(geo(new THREE.BoxGeometry(0.06, 0.016, 0.02)), hair, headP, -0.047, 0.165, 0.1);
+  const browR = mesh(geo(new THREE.BoxGeometry(0.06, 0.016, 0.02)), hair, headP, 0.047, 0.165, 0.1);
+  browL.rotation.z = -0.18;
+  browR.rotation.z = 0.18;
+  // Warm smile
+  const smile = mesh(geo(new THREE.TorusGeometry(0.03, 0.007, 5, 12, Math.PI)), lip, headP, 0, 0.062, 0.108);
+  smile.rotation.z = Math.PI;
+  mesh(geo(new THREE.SphereGeometry(0.02, 8, 6)), mat(new THREE.MeshBasicMaterial({ color: 0xe08a7a, transparent: true, opacity: 0.35 })), headP, -0.075, 0.08, 0.085);
+  mesh(geo(new THREE.SphereGeometry(0.02, 8, 6)), mat(new THREE.MeshBasicMaterial({ color: 0xe08a7a, transparent: true, opacity: 0.35 })), headP, 0.075, 0.08, 0.085);
   const nose = mesh(geo(new THREE.ConeGeometry(0.018, 0.045, 6)), skin, headP, 0, 0.09, 0.11);
   nose.rotation.x = Math.PI / 2;
-  mesh(geo(new THREE.BoxGeometry(0.05, 0.014, 0.02)), lip, headP, 0, 0.055, 0.105);
 
   const arm = (side: number) => {
     const shoulder = new THREE.Group();
@@ -136,13 +150,38 @@ export function createHero(): HeroRig {
   const legL = leg(-1);
   const legR = leg(1);
 
+  const rimMat = mat(new THREE.MeshBasicMaterial({ color: 0xffc35a, side: THREE.BackSide, transparent: true, opacity: 0.55, depthWrite: false }));
+  const bodyMeshes: THREE.Mesh[] = [];
   group.traverse((obj) => {
     const meshObj = obj as THREE.Mesh;
     if (meshObj.isMesh) {
       meshObj.castShadow = true;
       meshObj.receiveShadow = true;
+      meshObj.geometry.computeBoundingSphere();
+      if ((meshObj.geometry.boundingSphere?.radius ?? 0) > 0.07 && meshObj.material !== flame) bodyMeshes.push(meshObj);
     }
   });
+  // Warm golden rim so the hero pops against the dark city.
+  for (const b of bodyMeshes) {
+    const shell = new THREE.Mesh(b.geometry, rimMat);
+    shell.scale.setScalar(1.07);
+    shell.castShadow = false;
+    b.add(shell);
+  }
+  // Soft diya-glow halo behind the hero.
+  const hc = document.createElement("canvas");
+  hc.width = hc.height = 64;
+  const hg = hc.getContext("2d")!;
+  const grd = hg.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, "rgba(255,200,120,0.9)");
+  grd.addColorStop(1, "rgba(255,160,60,0)");
+  hg.fillStyle = grd;
+  hg.fillRect(0, 0, 64, 64);
+  const haloTex = new THREE.CanvasTexture(hc);
+  const heroHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, color: 0xffb060, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false }));
+  heroHalo.scale.set(1.8, 2.2, 1);
+  heroHalo.position.set(0, 1.0, -0.2);
+  group.add(heroHalo);
 
   const update = (a: HeroAnim) => {
     const speed = Math.abs(a.vx);
