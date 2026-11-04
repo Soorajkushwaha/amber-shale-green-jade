@@ -9,8 +9,9 @@ const GRAVITY = 24;
 const JUMP = 11.1;
 const MOVE = 7.5;
 const SPRINT = 10.8;
-const PW = 0.48;
-const PH = 1.55;
+// Hitbox grows with the bigger hero (a bit under the visual 1.25x so existing gaps/ceilings stay passable).
+const PW = 0.48 * 1.12;
+const PH = 1.55 * 1.18;
 
 export type StartOpts = {
   cityId: string;
@@ -534,7 +535,7 @@ export class Game {
       const hit = this.raycaster.ray.intersectPlane(this.aimPlane, this.hit);
       if (hit) {
         const dx = hit.x - this.p.x;
-        const dy = hit.y - (this.p.y + 1.05);
+        const dy = hit.y - (this.p.y + 1.3);
         const m = Math.hypot(dx, dy) || 1;
         this.dirx = dx / m;
         this.diry = dy / m;
@@ -724,7 +725,7 @@ export class Game {
     const cool = [0.28, 0.28, 0.32, 0.38, 0.5, 0.55][lvl] ?? 0.3;
     this.shootT = cool;
     const ox = this.p.x + this.dirx * 0.55;
-    const oy = this.p.y + 1.05 + this.diry * 0.2;
+    const oy = this.p.y + 1.3 + this.diry * 0.2;
     const spawn = (dx: number, dy: number, speed: number, dmg: number, r: number, hits: number, explode: boolean) => {
       const m = Math.hypot(dx, dy) || 1;
       this.spawnBolt(ox, oy, (dx / m) * speed, (dy / m) * speed, dmg, r, true, hits, explode);
@@ -811,7 +812,7 @@ export class Game {
             b.alive = false;
           }
         }
-      } else if (Math.hypot(b.x - this.p.x, b.y - (this.p.y + 0.8)) < 0.55 + b.r) {
+      } else if (Math.hypot(b.x - this.p.x, b.y - (this.p.y + 1.0)) < 0.65 + b.r) {
         this.damage(1);
         b.alive = false;
       }
@@ -1234,8 +1235,8 @@ export class Game {
       this.hero.group.visible = !blink;
       this.hero.group.position.set(this.p.x, this.p.y + this.hero.bobY, 0.35);
       const lookX = THREE.MathUtils.clamp(this.p.x + this.facing * 1.6, 1, (this.level?.length ?? 20) - 1);
-      const lookY = this.p.y + 1.25;
-      const dist = this.portrait ? 16.5 : this.cine?.kind === "boss" ? 17 : 12.8;
+      const lookY = this.p.y + 1.45;
+      const dist = this.portrait ? 17.5 : this.cine?.kind === "boss" ? 18 : 13.8;
       const lift = this.cine?.kind === "clear" ? 2.4 : this.cine?.kind === "boss" ? 2.2 : 1.45;
       this.desired.set(lookX, lookY + lift, dist);
       this.look.set(lookX, lookY, 0);
@@ -1243,8 +1244,8 @@ export class Game {
       this.hero.group.visible = true;
       this.hero.group.position.set(0.2, this.hero.bobY, 0.35);
       const a = this.time * 0.18;
-      this.desired.set(Math.sin(a) * 1.6, 2.15, 8.2);
-      this.look.set(0.2, 1.25, 0);
+      this.desired.set(Math.sin(a) * 1.6, 2.5, 9.4);
+      this.look.set(0.2, 1.5, 0);
     }
     const k = 1 - Math.exp(-3.4 * Math.max(dt, 0.001));
     this.camera.position.lerp(this.desired, k);

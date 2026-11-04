@@ -14,6 +14,17 @@ const VIS: Record<ActorKind, number> = {
   titan: 1.25,
 };
 
+/** Rim / light colour per villain. */
+const RIM: Record<ActorKind, number> = {
+  shadow: 0xc040ff,
+  drone: 0xff9a2a,
+  smoke: 0x9aa0c0,
+  energy: 0xff6a2a,
+  guardian: 0xff4a24,
+  boss: 0xff3a2a,
+  titan: 0xff2a80,
+};
+
 const cache = new Map<string, THREE.BufferGeometry>();
 function g(key: string, build: () => THREE.BufferGeometry) {
   let geo = cache.get(key);
@@ -83,14 +94,40 @@ export function makeActor(kind: ActorKind): THREE.Group {
   else if (kind === "energy") energy(body);
   else if (kind === "guardian") guardian(body);
   else boss(body, kind === "titan");
+  const rim = RIM[kind];
+  const outline = m(`rim-${rim}`, () =>
+    new THREE.MeshBasicMaterial({ color: rim, side: THREE.BackSide, transparent: true, opacity: 0.85, toneMapped: false, depthWrite: false }),
+  );
+  const solids: THREE.Mesh[] = [];
   root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (mesh.isMesh) {
       const basic = (mesh.material as THREE.Material).type === "MeshBasicMaterial";
       mesh.castShadow = !basic;
       mesh.receiveShadow = !basic;
+      if (!basic && !mesh.parent?.name.startsWith("face")) solids.push(mesh);
     }
   });
+  // Glowing rim outline: back-face shell slightly larger than each body part (cheap, no real lights).
+  for (const mesh of solids) {
+    const shell = new THREE.Mesh(mesh.geometry, outline);
+    shell.scale.setScalar(1.09);
+    shell.castShadow = false;
+    shell.renderOrder = -1;
+    mesh.add(shell);
+  }
+  // Light pool on the ground so villains look like they emit light.
+  const pool = new THREE.Mesh(
+    g("pool", () => new THREE.CircleGeometry(0.9, 24)),
+    m(`pool-${rim}`, () =>
+      new THREE.MeshBasicMaterial({ map: glowTexture(), color: rim, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+    ),
+  );
+  pool.rotation.x = -Math.PI / 2;
+  pool.position.y = kind === "drone" ? 0.03 : 0.04;
+  pool.scale.setScalar(VIS[kind] * (kind === "boss" || kind === "titan" ? 2.6 : 1.2));
+  pool.name = "pool";
+  root.add(pool);
   return root;
 }
 
@@ -164,19 +201,45 @@ function add(parent: THREE.Object3D, mesh: THREE.Mesh, x = 0, y = 0, z = 0) {
   return mesh;
 }
 
-function eyes(parent: THREE.Object3D, color: number, y: number, z: number, dx: number, r: number) {
-  const eye = glowMat(`eye-${color}`, color);
-  const geo = g(`eye-${r}`, () => new THREE.SphereGeometry(r, 8, 6));
-  add(parent, new THREE.Mesh(geo, eye), -dx, y, z);
-  add(parent, new THREE.Mesh(geo, eye), dx, y, z);
-  halo(parent, color, r * 9, -dx, y, z + 0.02, 0.8);
-  halo(parent, color, r * 9, dx, y, z + 0.02, 0.8);
+
+/** Menacing face: glowing slanted eyes with pupils, angry brows, and a glowing mouth with fangs. */
+function face(parent: THREE.Object3D, eyeColor: number, y: number, z: number, k = 1) {
+  const fg = new THREE.Group();
+  fg.name = "face";
+  fg.position.set(0, y, z);
+  fg.scale.setScalar(k);
+  parent.add(fg);
+  const eye = glowMat(`eye-${eyeColor}`, eyeColor);
+  const pupil = glowMat("pupil", 0x120404);
+  const brow = glowMat("brow", 0x0a0306);
+  const mouth = glowMat("mouth", 0x2a0404);
+  const fang = glowMat("fang", 0xfff2dc);
+  const lip = glowMat(`lip-${eyeColor}`, eyeColor);
+  for (const sx of [-1, 1]) {
+    const e = add(fg, new THREE.Mesh(g("f-eye", () => new THREE.SphereGeometry(0.05, 10, 8)), eye), 0.075 * sx, 0, 0);
+    e.scale.set(1.3, 0.75, 0.6);
+    e.rotation.z = 0.35 * sx;
+    add(fg, new THREE.Mesh(g("f-pupil", () => new THREE.SphereGeometry(0.018, 6, 6)), pupil), 0.07 * sx, -0.004, 0.03).scale.set(0.6, 1.4, 0.6);
+    const b = add(fg, new THREE.Mesh(g("f-brow", () => new THREE.BoxGeometry(0.11, 0.025, 0.03)), brow), 0.075 * sx, 0.055, 0.02);
+    b.rotation.z = 0.5 * sx;
+    halo(fg, eyeColor, 0.32, 0.075 * sx, 0, 0.03, 0.85);
+  }
+  const mo = add(fg, new THREE.Mesh(g("f-mouth", () => new THREE.BoxGeometry(0.15, 0.05, 0.02)), mouth), 0, -0.1, 0);
+  mo.rotation.z = 0;
+  add(fg, new THREE.Mesh(g("f-lip", () => new THREE.BoxGeometry(0.16, 0.008, 0.022)), lip), 0, -0.077, 0.002);
+  add(fg, new THREE.Mesh(g("f-lip", () => new THREE.BoxGeometry(0.16, 0.008, 0.022)), lip), 0, -0.123, 0.002);
+  for (const x of [-0.05, -0.017, 0.017, 0.05]) {
+    const t = add(fg, new THREE.Mesh(g("f-fang", () => new THREE.ConeGeometry(0.011, 0.03, 4)), fang), x, -0.088, 0.014);
+    t.rotation.z = Math.PI;
+  }
+  for (const x of [-0.033, 0.033]) add(fg, new THREE.Mesh(g("f-fang", () => new THREE.ConeGeometry(0.011, 0.03, 4)), fang), x, -0.112, 0.014);
+  return fg;
 }
 
 function shadow(root: THREE.Group) {
   const body = standard("sh-body", 0x1a1020, 0x4a1030, 0.7, 0.8);
   const cloak = standard("sh-cloak", 0x120a18, 0x2a0820, 0.9, 0.6);
-  halo(root, 0x8a1fb0, 2.2, 0, 0.95, -0.2, 0.35, "aura");
+  halo(root, 0x8a1fb0, 2.2, 0, 0.95, -0.2, 0.6, "aura");
   // Tattered cloak cone
   add(root, new THREE.Mesh(g("sh-cloak", () => new THREE.ConeGeometry(0.42, 1.1, 9, 1, true)), cloak), 0, 0.55, 0);
   add(root, new THREE.Mesh(g("sh-body", () => new THREE.CapsuleGeometry(0.22, 0.7, 4, 8)), body), 0, 0.95, 0);
@@ -194,7 +257,7 @@ function shadow(root: THREE.Group) {
   const claw = glowMat("claw", 0xff4a3a);
   add(root, new THREE.Mesh(g("sh-claw", () => new THREE.ConeGeometry(0.06, 0.16, 5)), claw), -0.52, 0.72, 0.05).rotation.z = Math.PI;
   add(root, new THREE.Mesh(g("sh-claw", () => new THREE.ConeGeometry(0.06, 0.16, 5)), claw), 0.52, 0.72, 0.05).rotation.z = Math.PI;
-  eyes(root, 0xff5a24, 1.48, 0.17, 0.075, 0.04);
+  face(root, 0xff5a24, 1.47, 0.19, 1);
 }
 
 function drone(root: THREE.Group) {
@@ -203,7 +266,7 @@ function drone(root: THREE.Group) {
   const hub = new THREE.Group();
   hub.name = "hub";
   root.add(hub);
-  halo(root, 0xff8a2a, 1.6, 0, 0.9, -0.15, 0.35, "aura");
+  halo(root, 0xff8a2a, 1.6, 0, 0.9, -0.15, 0.6, "aura");
   add(hub, new THREE.Mesh(g("oct", () => new THREE.OctahedronGeometry(0.3)), shell), 0, 0.9, 0);
   add(hub, new THREE.Mesh(g("wing", () => new THREE.BoxGeometry(0.85, 0.04, 0.2)), trim), 0, 0.95, 0);
   add(hub, new THREE.Mesh(g("wing2", () => new THREE.BoxGeometry(0.2, 0.04, 0.85)), trim), 0, 0.95, 0);
@@ -214,12 +277,16 @@ function drone(root: THREE.Group) {
   ring.name = "ring";
   add(root, new THREE.Mesh(g("dr-eye", () => new THREE.SphereGeometry(0.09, 10, 8)), glowMat("dr-eye", 0xffb03a)), 0, 0.9, 0.2);
   halo(root, 0xffb03a, 0.7, 0, 0.9, 0.25, 0.9);
+  const dBrow = add(root, new THREE.Mesh(g("dr-brow", () => new THREE.BoxGeometry(0.26, 0.04, 0.04)), glowMat("brow", 0x0a0306)), 0, 1.03, 0.24);
+  dBrow.rotation.z = 0.0;
+  const face2 = face(root, 0xffb03a, 0.86, 0.27, 0.9);
+  face2.children.filter((c) => c.position.y >= -0.01).forEach((c) => (c.visible = false));
 }
 
 function smoke(root: THREE.Group) {
   const puff = standard("sm-puff", 0x34343a, 0x1a1210, 0.95, 0.5);
   const dark = standard("sm-dark", 0x1e1e24, 0x120808, 0.95, 0.5);
-  halo(root, 0x6a6a7a, 2.4, 0, 0.9, -0.3, 0.25, "aura");
+  halo(root, 0x6a6a7a, 2.4, 0, 0.9, -0.3, 0.5, "aura");
   const puffs: [number, number, number, number, THREE.Material][] = [
     [0.34, 0, 0.42, 0, puff],
     [0.24, 0.25, 0.55, -0.05, dark],
@@ -232,15 +299,13 @@ function smoke(root: THREE.Group) {
     const mesh = add(root, new THREE.Mesh(g(`p-${r}`, () => new THREE.SphereGeometry(r, 12, 10)), mat), x, y, z);
     mesh.name = i === 0 ? "base" : "puff";
   });
-  eyes(root, 0xe7b04a, 0.97, 0.24, 0.09, 0.045);
-  // Jagged grin
-  add(root, new THREE.Mesh(g("sm-mouth", () => new THREE.BoxGeometry(0.18, 0.03, 0.02)), glowMat("sm-mouth", 0xff6a2a)), 0, 0.84, 0.27);
+  face(root, 0xe7b04a, 0.97, 0.3, 1.2);
 }
 
 function energy(root: THREE.Group) {
   const crystal = standard("en-crystal", 0x3a2418, 0xe25a24, 0.2, 0.9);
   const dark = standard("en-dark", 0x1a1010, 0x3a1008, 0.4, 0.6);
-  halo(root, 0xff5a24, 2.0, 0, 0.9, -0.1, 0.4, "aura");
+  halo(root, 0xff5a24, 2.0, 0, 0.9, -0.1, 0.6, "aura");
   add(root, new THREE.Mesh(g("ico", () => new THREE.IcosahedronGeometry(0.34, 0)), crystal), 0, 0.88, 0);
   add(root, new THREE.Mesh(g("ico2", () => new THREE.OctahedronGeometry(0.17)), crystal), 0, 1.38, 0);
   const orbit = new THREE.Group();
@@ -253,13 +318,13 @@ function energy(root: THREE.Group) {
   }
   add(root, new THREE.Mesh(g("legc", () => new THREE.BoxGeometry(0.09, 0.45, 0.09)), dark), -0.12, 0.3, 0);
   add(root, new THREE.Mesh(g("legc", () => new THREE.BoxGeometry(0.09, 0.45, 0.09)), dark), 0.12, 0.3, 0);
-  eyes(root, 0xfff0b0, 0.95, 0.3, 0.09, 0.035);
+  face(root, 0xfff0b0, 0.92, 0.3, 1.1);
 }
 
 function guardian(root: THREE.Group) {
   const plate = standard("gu-plate", 0x241a12, 0x3a2010, 0.4, 0.6);
   const gold = standard("gu-gold", 0x8a6020, 0x4a2a08, 0.3, 0.5);
-  halo(root, 0xe25a24, 2.6, 0, 1.1, -0.3, 0.3, "aura");
+  halo(root, 0xe25a24, 2.6, 0, 1.1, -0.3, 0.55, "aura");
   add(root, new THREE.Mesh(g("gbody", () => new THREE.BoxGeometry(0.72, 0.9, 0.42)), plate), 0, 0.98, 0);
   add(root, new THREE.Mesh(g("gbelt", () => new THREE.BoxGeometry(0.76, 0.1, 0.46)), gold), 0, 0.6, 0);
   add(root, new THREE.Mesh(g("gpad", () => new THREE.SphereGeometry(0.2, 10, 8)), gold), -0.42, 1.38, 0);
@@ -274,8 +339,7 @@ function guardian(root: THREE.Group) {
   shield.rotation.z = 0.15;
   add(root, new THREE.Mesh(g("shield-gem", () => new THREE.OctahedronGeometry(0.08)), glowMat("gu-gem", 0xff4a24)), -0.52, 1.0, 0.22);
   // visor slit
-  add(root, new THREE.Mesh(g("gvisor", () => new THREE.BoxGeometry(0.28, 0.05, 0.02)), glowMat("gu-visor", 0xff5a24)), 0, 1.63, 0.18);
-  halo(root, 0xff5a24, 0.55, 0, 1.63, 0.2, 0.8);
+  face(root, 0xff5a24, 1.63, 0.18, 1.05);
 }
 
 function boss(root: THREE.Group, titan: boolean) {
@@ -283,9 +347,9 @@ function boss(root: THREE.Group, titan: boolean) {
   const hide = standard(titan ? "bs-hide-t" : "bs-hide", titan ? 0x1a0a1a : 0x140c14, titan ? 0x5a1030 : 0x4a1820, 0.5, 0.8);
   const bone = standard("bs-bone", 0xd8c8a8, 0x2a1a08, 0.5, 0.3);
   const gold = standard("bs-gold", 0x9a7020, 0x4a2a08, 0.3, 0.6);
-  halo(root, titan ? 0xb01a60 : 0xe23a24, 5 * scale, 0, 1.7 * scale, -0.6, 0.35, "aura");
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.55 * scale, 1.3 * scale, 5, 12), hide);
-  body.position.y = 1.5 * scale;
+  halo(root, titan ? 0xb01a60 : 0xe23a24, 5 * scale, 0, 1.7 * scale, -0.6, 0.6, "aura");
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.55 * scale, 0.85 * scale, 5, 12), hide);
+  body.position.y = 1.32 * scale;
   root.add(body);
   // Chest armour & collar
   const collar = new THREE.Mesh(new THREE.TorusGeometry(0.42 * scale, 0.08 * scale, 6, 16), gold);
@@ -305,9 +369,6 @@ function boss(root: THREE.Group, titan: boolean) {
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.4 * scale, 14, 12), hide);
   head.position.y = 2.5 * scale;
   root.add(head);
-  const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.4 * scale, 0.12 * scale, 0.2 * scale), bone);
-  jaw.position.set(0, 2.3 * scale, 0.28 * scale);
-  root.add(jaw);
   const hornL = new THREE.Mesh(new THREE.ConeGeometry(0.1 * scale, 0.6 * scale, 7), bone);
   hornL.position.set(-0.22 * scale, 2.95 * scale, 0);
   hornL.rotation.z = 0.5;
@@ -351,5 +412,5 @@ function boss(root: THREE.Group, titan: boolean) {
       root.add(wing);
     }
   }
-  eyes(root, 0xff3a1a, 2.55 * scale, 0.33 * scale, 0.14 * scale, 0.065 * scale);
+  face(root, 0xff3a1a, 2.53 * scale, 0.4 * scale, 2.2 * scale);
 }

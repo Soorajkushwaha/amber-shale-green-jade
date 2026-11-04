@@ -1,5 +1,8 @@
 import * as THREE from "three";
 
+/** Hero drawn ~1.25x larger than the original rig. */
+export const HERO_SCALE = 1.25;
+
 export type HeroAnim = {
   time: number;
   vx: number;
@@ -217,11 +220,11 @@ export function createHero(): HeroRig {
     if (a.hurt > 0) torso.rotation.x = 0.35;
     if (a.land > 0 && a.grounded) {
       const k = a.land / 0.12;
-      group.scale.set(1 + 0.08 * k, 1 - 0.1 * k, 1);
+      group.scale.set((1 + 0.08 * k) * HERO_SCALE, (1 - 0.1 * k) * HERO_SCALE, HERO_SCALE);
     } else if (!a.grounded && a.vy > 0) {
-      group.scale.set(0.94, 1.08, 0.94);
+      group.scale.set(0.94 * HERO_SCALE, 1.08 * HERO_SCALE, 0.94 * HERO_SCALE);
     } else {
-      group.scale.set(1, 1, 1);
+      group.scale.setScalar(HERO_SCALE);
     }
 
     const flick = 0.82 + Math.sin(a.time * 22) * 0.12 + Math.sin(a.time * 37) * 0.06;
