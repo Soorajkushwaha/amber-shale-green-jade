@@ -1312,8 +1312,49 @@ export class Game {
     void n;
   }
 
+  private skyTex: THREE.Texture | null = null;
+  /** Night-sky gradient with stars, a warm moon and a festive horizon glow. */
+  private skyTexture(theme: Theme) {
+    this.skyTex?.dispose();
+    const c = document.createElement("canvas");
+    c.width = 512;
+    c.height = 512;
+    const ctx = c.getContext("2d")!;
+    const top = new THREE.Color(theme.sky).multiplyScalar(0.35);
+    const mid = new THREE.Color(theme.sky);
+    const low = new THREE.Color(theme.sky).lerp(new THREE.Color("#e2742a"), 0.45);
+    const grd = ctx.createLinearGradient(0, 0, 0, 512);
+    grd.addColorStop(0, `#${top.getHexString()}`);
+    grd.addColorStop(0.55, `#${mid.getHexString()}`);
+    grd.addColorStop(1, `#${low.getHexString()}`);
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, 512, 512);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 110; i++) {
+      const x = rnd() * 512;
+      const y = rnd() * 330;
+      const r = rnd() * 0.6 + 0.2;
+      ctx.fillStyle = `rgba(255,${230 + Math.floor(rnd() * 25)},${190 + Math.floor(rnd() * 60)},${0.35 + rnd() * 0.6})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const moon = ctx.createRadialGradient(400, 90, 0, 400, 90, 70);
+    moon.addColorStop(0, "rgba(255,236,200,0.95)");
+    moon.addColorStop(0.28, "rgba(255,220,160,0.75)");
+    moon.addColorStop(0.32, "rgba(255,200,130,0.25)");
+    moon.addColorStop(1, "rgba(255,180,90,0)");
+    ctx.fillStyle = moon;
+    ctx.fillRect(300, 0, 212, 200);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.skyTex = tex;
+    return tex;
+  }
+
   private paintTheme(theme: Theme) {
-    this.scene.background = new THREE.Color(theme.sky);
+    this.scene.background = this.skyTexture(theme);
     this.scene.fog = new THREE.Fog(theme.fog, 18, this.portrait ? 46 : 62);
     this.hemi.color.set(theme.sky);
     this.hemi.groundColor.set(theme.ground);
